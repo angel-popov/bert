@@ -1,4 +1,6 @@
 {-# LANGUAGE OverlappingInstances, TypeSynonymInstances, FlexibleInstances #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE UndecidableInstances #-}
 -- | Define BERT terms their binary encoding & decoding and a typeclass
 -- for converting Haskell values to BERT terms and back.
 --
@@ -102,28 +104,28 @@ instance BERT Term where
   showBERT = id
   readBERT = return . id
 
-instance BERT Int where
+instance MonadFail (Either String) => BERT Int where
   showBERT = IntTerm
   readBERT (IntTerm value) = return value
   readBERT _ = fail "Invalid integer type"
 
-instance BERT Bool where
+instance MonadFail (Either String) => BERT Bool where
   showBERT = BoolTerm
   readBERT (BoolTerm x) = return x
   readBERT _ = fail "Invalid bool type"
 
-instance BERT Integer where
+instance MonadFail (Either String) => BERT Integer where
   showBERT = BigbigintTerm
   readBERT (BigintTerm x) = return x
   readBERT (BigbigintTerm x) = return x
   readBERT _ = fail "Invalid integer type"
 
-instance BERT Float where
+instance MonadFail (Either String) => BERT Float where
   showBERT = FloatTerm
   readBERT (FloatTerm value) = return value
   readBERT _ = fail "Invalid floating point type"
 
-instance BERT String where
+instance MonadFail (Either String) => BERT String where
   showBERT = BytelistTerm . C.pack
   readBERT (BytelistTerm x) = return $ C.unpack x
   readBERT (BinaryTerm x) = return $ C.unpack x
@@ -131,35 +133,35 @@ instance BERT String where
   readBERT (ListTerm xs) = mapM readBERT xs >>= return . map chr
   readBERT _ = fail "Invalid string type"
 
-instance BERT ByteString where
+instance MonadFail (Either String) => BERT ByteString where
   showBERT = BytelistTerm
   readBERT (BytelistTerm value) = return value
   readBERT _ = fail "Invalid bytestring type"
 
-instance (BERT a) => BERT [a] where
+instance (BERT a, MonadFail (Either String)) => BERT [a] where
   showBERT xs = ListTerm $ map showBERT xs
   readBERT (ListTerm xs) = mapM readBERT xs
   readBERT _ = fail "Invalid list type"
 
-instance (BERT a, BERT b) => BERT (a, b) where
+instance (BERT a, BERT b, MonadFail (Either String)) => BERT (a, b) where
   showBERT (a, b) = TupleTerm [showBERT a, showBERT b]
   readBERT (TupleTerm [a, b]) = liftM2 (,) (readBERT a) (readBERT b)
   readBERT _ = fail "Invalid tuple(2) type"
 
-instance (BERT a, BERT b, BERT c) => BERT (a, b, c) where
+instance (BERT a, BERT b, BERT c, MonadFail (Either String)) => BERT (a, b, c) where
   showBERT (a, b, c) = TupleTerm [showBERT a, showBERT b, showBERT c]
   readBERT (TupleTerm [a, b, c]) =
     liftM3 (,,) (readBERT a) (readBERT b) (readBERT c)
   readBERT _ = fail "Invalid tuple(3) type"
 
-instance (BERT a, BERT b, BERT c, BERT d) => BERT (a, b, c, d) where
+instance (BERT a, BERT b, BERT c, BERT d, MonadFail (Either String)) => BERT (a, b, c, d) where
   showBERT (a, b, c, d) =
     TupleTerm [showBERT a, showBERT b, showBERT c, showBERT d]
   readBERT (TupleTerm [a, b, c, d]) =
     liftM4 (,,,) (readBERT a) (readBERT b) (readBERT c) (readBERT d)
   readBERT _ = fail "Invalid tuple(4) type"
 
-instance (Ord k, BERT k, BERT v) => BERT (Map k v) where
+instance (Ord k, BERT k, BERT v, MonadFail (Either String)) => BERT (Map k v) where
   showBERT m = DictionaryTerm
              $ map (\(k, v) -> (showBERT k, showBERT v)) (Map.toList m)
   readBERT (DictionaryTerm kvs) =
@@ -168,7 +170,7 @@ instance (Ord k, BERT k, BERT v) => BERT (Map k v) where
   readBERT _ = fail "Invalid map type"
 
 -- Binary encoding & decoding.
-instance Binary Term where
+instance (MonadFail PutM) => Binary Term where
   put term = putWord8 131 >> putTerm term
   get      = getWord8 >>= \magic ->
                case magic of
@@ -176,7 +178,7 @@ instance Binary Term where
                  _   -> fail "bad magic"
 
 -- | Binary encoding of a single term (without header)
-putTerm :: Term -> PutM ()
+putTerm :: (MonadFail PutM) => Term -> PutM ()
 putTerm (IntTerm value)
   | 0 <= value && value < 256 = tag 97 >> put8u value
   | otherwise                 = tag 98 >> put32s value

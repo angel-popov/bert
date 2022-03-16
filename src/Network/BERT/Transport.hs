@@ -1,4 +1,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving, TypeFamilies, FlexibleContexts #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE UndecidableInstances #-}
+
 -- | Underlying transport abstraction
 module Network.BERT.Transport
   (
@@ -26,7 +29,7 @@ import Data.Conduit
 import Data.Conduit.Network
 import Data.Conduit.Serialization.Binary
 import Data.Void
-
+import Data.Binary.Put
 import Data.BERT
 
 -- | A function to send packets to the peer
@@ -63,18 +66,18 @@ data TCP = TCP {
     -- structure is passed in.
   }
 
-tcpSendPacketFn :: TCP -> SendPacketFn
+tcpSendPacketFn :: (MonadFail PutM) => TCP -> SendPacketFn
 tcpSendPacketFn (TCP sock) packet =
   yield packet    $=
   conduitEncode   $$
   sinkSocket sock
 
-instance Transport TCP where
+instance (MonadFail PutM) => Transport TCP where
   runSession tcp@(TCP sock) session =
     sourceSocket sock $=
     conduitDecode     $$
     (runReaderT session (tcpSendPacketFn tcp))
-  closeConnection (TCP sock) = sClose sock
+  closeConnection (TCP sock) = close sock
 
 -- | Establish a connection to the TCP server and return the resulting
 -- transport. It can be used to make multiple requests.
@@ -91,18 +94,18 @@ data TCPServer = TCPServer {
     -- ^ The listening socket. Assumed to be bound but not listening yet.
   }
 
-instance Server TCPServer where
+instance (MonadFail PutM) => Server TCPServer where
   type ServerTransport TCPServer = TCP
 
   runServer (TCPServer sock) handle = do
-    listen sock sOMAXCONN
+    listen sock 5
 
     forever $ do
       (clientsock, _) <- accept sock
       setSocketOption clientsock NoDelay 1
       handle $ TCP clientsock
 
-  cleanup (TCPServer sock) = sClose sock
+  cleanup (TCPServer sock) = close sock
 
 -- | A simple 'TCPServer' constructor, listens on all local interfaces.
 --
@@ -112,7 +115,7 @@ tcpServer :: PortNumber -> IO TCPServer
 tcpServer port = do
   sock <- socket AF_INET Stream defaultProtocol
   setSocketOption sock ReuseAddr 1
-  bindSocket sock $ SockAddrInet port iNADDR_ANY
+  bind sock $ SockAddrInet port $ tupleToHostAddress (0,0,0,0)
   return $ TCPServer sock
 
 -- | Send a term
